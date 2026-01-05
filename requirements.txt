@@ -1,2 +1,2 @@
 streamlit
-pyDolarVenezuela>=1.4.0
+pyDolarVenezuela
