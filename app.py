@@ -1,70 +1,63 @@
 import streamlit as st
 import pyDolarVenezuela as pdv
 
-# Configuración inicial
+# 1. Configuración inicial
 st.set_page_config(page_title="Ahorro Vzla", page_icon="💸")
 
-# --- FUNCIÓN DE EXTRACCIÓN CON MÚLTIPLES INTENTOS ---
-@st.cache_data(ttl=30)  # Bajamos a 30 segundos para pruebas
-def obtener_tasas_reales():
-    tasa_bcv = 0.0
-    tasa_bin = 0.0
-    
-    # Lista de proveedores para intentar uno por uno
-    proveedores = [
-        pdv.providers.CriptoDolar, # El más estable en la nube
-        pdv.providers.Bcv,
-        pdv.providers.EnParaleloVzla
-    ]
-    
-    for p in proveedores:
-        try:
-            monitor = pdv.Monitor(provider=p)
-            datos = monitor.get_all_monitors()
-            
-            for m in datos:
-                key = m.lower()
-                if ('bcv' in key or 'oficial' in key or 'usd' in key) and tasa_bcv == 0:
-                    tasa_bcv = float(datos[m]['price'])
-                if ('binance' in key or 'p2p' in key) and tasa_bin == 0:
-                    tasa_bin = float(datos[m]['price'])
-            
-            # Si ya conseguimos ambas, dejamos de buscar en otros proveedores
-            if tasa_bcv > 0 and tasa_bin > 0:
-                break
-        except:
-            continue
-            
-    return tasa_bcv, tasa_bin
+# 2. Inicializar la memoria (Session State)
+# Esto evita que los valores se reseteen al escribir
+if 'tasa_bcv' not in st.session_state:
+    st.session_state.tasa_bcv = 0.0
+if 'tasa_binance' not in st.session_state:
+    st.session_state.tasa_binance = 0.0
+
+# 3. Función para obtener tasas (Solo se ejecuta si la memoria está vacía o pides actualizar)
+def obtener_datos():
+    try:
+        monitor = pdv.Monitor(provider=pdv.providers.CriptoDolar)
+        datos = monitor.get_all_monitors()
+        bcv, binance = 0.0, 0.0
+        for m in datos:
+            key = m.lower()
+            if ('bcv' in key or 'usd' in key) and bcv == 0:
+                bcv = float(datos[m]['price'])
+            if ('binance' in key or 'p2p' in key) and binance == 0:
+                binance = float(datos[m]['price'])
+        return bcv, binance
+    except:
+        return 47.60, 57.50
+
+# Cargar datos automáticos solo la primera vez
+if st.session_state.tasa_bcv == 0:
+    bcv_auto, bin_auto = obtener_datos()
+    st.session_state.tasa_bcv = bcv_auto
+    st.session_state.tasa_binance = bin_auto
 
 # --- INTERFAZ ---
-st.title("💸 Calculadora de Ahorro Vzla")
-
-# Intentamos obtener tasas
-t_bcv_auto, t_bin_auto = obtener_tasas_reales()
-
-# Si siguen en 0, ponemos valores aproximados actuales para que la app no nazca vacía
-if t_bcv_auto == 0: t_bcv_auto = 47.50
-if t_bin_auto == 0: t_bin_auto = 57.00
+st.title("💸 Calculadora Ahorro Vzla")
 
 with st.sidebar:
     st.header("⚙️ Ajuste de Tasas")
     
-    # El usuario puede ver y corregir los valores si la nube falla
-    t_bcv = st.number_input("Tasa Oficial (BCV)", value=t_bcv_auto, format="%.2f")
-    t_bin = st.number_input("Tasa Cambio (Binance)", value=t_bin_auto, format="%.2f")
+    # Usamos los valores de la memoria (session_state)
+    t_bcv = st.number_input("Tasa BCV", value=st.session_state.tasa_bcv, format="%.2f")
+    t_bin = st.number_input("Tasa Binance", value=st.session_state.tasa_binance, format="%.2f")
     
-    if st.button("🔄 Forzar Actualización"):
-        st.cache_data.clear()
+    # Botón para forzar actualización manual
+    if st.button("🔄 Actualizar desde Internet"):
+        bcv_up, bin_up = obtener_datos()
+        st.session_state.tasa_bcv = bcv_up
+        st.session_state.tasa_binance = bin_up
         st.rerun()
 
     st.divider()
-    st.subheader("🏪 Datos de la Tienda")
+    st.subheader("🏪 Datos de Tienda")
+    # Estos dependen de lo que pongas arriba
     t_tienda = st.number_input("Tasa Tienda", value=t_bcv, format="%.2f")
     t_cambista = st.number_input("Tasa Cambista", value=t_bin, format="%.2f")
 
 # --- CÁLCULOS ---
-monto = st.number_input("Monto en $", min_value=0.1, value=10.0)
+monto = st.number_input("Monto de compra ($)", min_value=0.1, value=10.0)
 
 costo_efe = monto * 1.03
 costo_bs_bin = (monto * t_tienda) / t_bin
@@ -74,23 +67,17 @@ mejor_bs = min(costo_bs_bin, costo_bs_cam)
 metodo = "Binance" if costo_bs_bin <= costo_bs_cam else "Cambista"
 ahorro = costo_efe - mejor_bs
 
-# --- VISUALIZACIÓN TIPO APP ---
+# --- VISUALIZACIÓN ---
 st.divider()
 c1, c2 = st.columns(2)
 
 with c1:
-    st.markdown("### Pagar Efectivo")
-    st.title(f"${costo_efe:.2f}")
-    st.caption("Incluye 3% IGTF")
-
+    st.metric("Efectivo (+3%)", f"${costo_efe:.2f}")
 with c2:
-    st.markdown(f"### Pagar en Bs")
-    st.title(f"${mejor_bs:.2f}")
-    st.caption(f"Vía {metodo}")
-
-st.divider()
+    st.metric(f"Pago en Bs ({metodo})", f"${mejor_bs:.2f}", 
+              delta=f"${ahorro:.2f}" if ahorro > 0 else f"${ahorro:.2f}")
 
 if ahorro > 0:
-    st.success(f"### ✅ ¡PAGA EN BOLÍVARES!\nTe ahorras un {((ahorro/costo_efe)*100):.1f}%")
+    st.success(f"### ✅ ¡CONVIENE PAGAR EN BS!\nAhorro: {((ahorro/costo_efe)*100):.1f}%")
 else:
-    st.warning("### ⚠️ USA EL EFECTIVO\nNo hay ganancia cambiando a bolívares.")
+    st.warning("### ⚠️ USA EFECTIVO")
