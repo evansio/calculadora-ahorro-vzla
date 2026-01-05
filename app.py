@@ -1,108 +1,96 @@
 import streamlit as st
 import pyDolarVenezuela as pdv
 
-# Configuración visual
+# Configuración inicial
 st.set_page_config(page_title="Ahorro Vzla", page_icon="💸")
 
-st.title("💸 Calculadora de Ahorro Vzla")
-st.markdown("Comparación inteligente de tasas en tiempo real.")
-
-# --- LÓGICA DE EXTRACCIÓN ROBUSTA ---
-@st.cache_data(ttl=60) # Actualización automática cada 60 segundos
-def obtener_tasas_dinamicas():
+# --- FUNCIÓN DE EXTRACCIÓN CON MÚLTIPLES INTENTOS ---
+@st.cache_data(ttl=30)  # Bajamos a 30 segundos para pruebas
+def obtener_tasas_reales():
     tasa_bcv = 0.0
-    tasa_binance = 0.0
+    tasa_bin = 0.0
     
-    try:
-        # Intento 1: Usar el monitor general (más rápido)
-        monitor = pdv.Monitor()
-        datos = monitor.get_all_monitors()
-        
-        for m in datos:
-            key = m.lower()
-            if 'bcv' in key and tasa_bcv == 0:
-                tasa_bcv = float(datos[m]['price'])
-            if 'binance' in key and tasa_binance == 0:
-                tasa_binance = float(datos[m]['price'])
-        
-        # Intento 2: Si el 1 falló, buscar por proveedores específicos
-        if tasa_bcv == 0:
-            bcv_prov = pdv.Monitor(provider=pdv.providers.Bcv)
-            tasa_bcv = float(bcv_prov.get_specific_monitor(monitor_code='usd')['price'])
-            
-        if tasa_binance == 0:
-            binance_prov = pdv.Monitor(provider=pdv.providers.EnParaleloVzla)
-            tasa_binance = float(binance_prov.get_specific_monitor(monitor_code='binance')['price'])
-            
-    except Exception as e:
-        # Si todo falla, mostrar error técnico para saber qué pasó
-        st.sidebar.warning(f"Nota: Usando valores manuales (Error: {e})")
-        
-    # Valores de último recurso si la red falla totalmente
-    if tasa_bcv == 0: tasa_bcv = 47.60
-    if tasa_binance == 0: tasa_binance = 56.50
+    # Lista de proveedores para intentar uno por uno
+    proveedores = [
+        pdv.providers.CriptoDolar, # El más estable en la nube
+        pdv.providers.Bcv,
+        pdv.providers.EnParaleloVzla
+    ]
     
-    return tasa_bcv, tasa_binance
+    for p in proveedores:
+        try:
+            monitor = pdv.Monitor(provider=p)
+            datos = monitor.get_all_monitors()
+            
+            for m in datos:
+                key = m.lower()
+                if ('bcv' in key or 'oficial' in key or 'usd' in key) and tasa_bcv == 0:
+                    tasa_bcv = float(datos[m]['price'])
+                if ('binance' in key or 'p2p' in key) and tasa_bin == 0:
+                    tasa_bin = float(datos[m]['price'])
+            
+            # Si ya conseguimos ambas, dejamos de buscar en otros proveedores
+            if tasa_bcv > 0 and tasa_bin > 0:
+                break
+        except:
+            continue
+            
+    return tasa_bcv, tasa_bin
 
-# Botón para forzar actualización
-if st.sidebar.button("🔄 Actualizar Tasas"):
-    st.cache_data.clear()
-    st.rerun()
+# --- INTERFAZ ---
+st.title("💸 Calculadora de Ahorro Vzla")
 
-t_auto_bcv, t_auto_binance = obtener_tasas_dinamicas()
+# Intentamos obtener tasas
+t_bcv_auto, t_bin_auto = obtener_tasas_reales()
 
-# --- INTERFAZ LATERAL ---
-st.sidebar.header("⚙️ Tasas Actuales")
-t_bcv = st.sidebar.number_input("BCV (Oficial)", value=t_auto_bcv, format="%.2f")
-t_binance = st.sidebar.number_input("Binance P2P", value=t_auto_binance, format="%.2f")
+# Si siguen en 0, ponemos valores aproximados actuales para que la app no nazca vacía
+if t_bcv_auto == 0: t_bcv_auto = 47.50
+if t_bin_auto == 0: t_bin_auto = 57.00
 
-st.sidebar.divider()
-st.sidebar.subheader("🏪 Configuración de Tienda")
-t_tienda = st.sidebar.number_input("Tasa que cobra la tienda", value=t_bcv, format="%.2f")
-t_cambista = st.sidebar.number_input("Tasa de tu cambista ($ físico)", value=t_binance, format="%.2f")
+with st.sidebar:
+    st.header("⚙️ Ajuste de Tasas")
+    
+    # El usuario puede ver y corregir los valores si la nube falla
+    t_bcv = st.number_input("Tasa Oficial (BCV)", value=t_bcv_auto, format="%.2f")
+    t_bin = st.number_input("Tasa Cambio (Binance)", value=t_bin_auto, format="%.2f")
+    
+    if st.button("🔄 Forzar Actualización"):
+        st.cache_data.clear()
+        st.rerun()
+
+    st.divider()
+    st.subheader("🏪 Datos de la Tienda")
+    t_tienda = st.number_input("Tasa Tienda", value=t_bcv, format="%.2f")
+    t_cambista = st.number_input("Tasa Cambista", value=t_bin, format="%.2f")
 
 # --- CÁLCULOS ---
-monto_usd = st.number_input("Monto de la compra ($)", min_value=0.1, value=10.0, step=1.0)
+monto = st.number_input("Monto en $", min_value=0.1, value=10.0)
 
-# Escenario A: Efectivo (Incluye 3% IGTF sobre el precio convertido a la tasa de la tienda)
-costo_efectivo_real = monto_usd * 1.03
+costo_efe = monto * 1.03
+costo_bs_bin = (monto * t_tienda) / t_bin
+costo_bs_cam = (monto * t_tienda) / t_cambista
 
-# Escenario B: Pagar en Bolívares (Cambiando dólares en Binance o con cambista)
-costo_via_binance = (monto_usd * t_tienda) / t_binance
-costo_via_cambista = (monto_usd * t_tienda) / t_cambista
+mejor_bs = min(costo_bs_bin, costo_bs_cam)
+metodo = "Binance" if costo_bs_bin <= costo_bs_cam else "Cambista"
+ahorro = costo_efe - mejor_bs
 
-# Elegir la mejor ruta de bolívares
-mejor_costo_bs = min(costo_via_binance, costo_via_cambista)
-metodo_nombre = "Binance" if costo_via_binance <= costo_via_cambista else "Cambista"
+# --- VISUALIZACIÓN TIPO APP ---
+st.divider()
+c1, c2 = st.columns(2)
 
-ahorro = costo_efectivo_real - mejor_costo_bs
+with c1:
+    st.markdown("### Pagar Efectivo")
+    st.title(f"${costo_efe:.2f}")
+    st.caption("Incluye 3% IGTF")
 
-# --- VISUALIZACIÓN ---
-st.subheader("📊 Comparación de Costo Real")
-col1, col2 = st.columns(2)
-
-with col1:
-    st.metric("Pago en Efectivo", f"${costo_efectivo_real:.2f}", help="Incluye 3% IGTF")
-    st.caption(f"A tasa tienda: {t_tienda}")
-
-with col2:
-    color_delta = "normal" if ahorro > 0 else "inverse"
-    st.metric(f"Pago en Bs (vía {metodo_nombre})", f"${mejor_costo_bs:.2f}", 
-              delta=f"-${ahorro:.2f} Ahorro" if ahorro > 0 else f"${ahorro:.2f}",
-              delta_color=color_delta)
-    st.caption(f"Cambiando a: {max(t_binance, t_cambista)}")
+with c2:
+    st.markdown(f"### Pagar en Bs")
+    st.title(f"${mejor_bs:.2f}")
+    st.caption(f"Vía {metodo}")
 
 st.divider()
 
 if ahorro > 0:
-    st.success(f"### ✅ CONVIENE PAGAR EN BOLÍVARES\nTe ahorras un **{((ahorro/costo_efectivo_real)*100):.1f}%** de tu dinero.")
+    st.success(f"### ✅ ¡PAGA EN BOLÍVARES!\nTe ahorras un {((ahorro/costo_efe)*100):.1f}%")
 else:
-    st.warning("### ⚠️ CONVIENE PAGAR EN EFECTIVO\nLa brecha es muy corta o la tienda tiene una tasa muy alta.")
-
-# Tabla detallada
-with st.expander("Ver detalles de la comparación"):
-    st.table({
-        "Método": ["Efectivo (Físico)", "Bolívares (vía Binance)", "Bolívares (vía Cambista)"],
-        "Tasa de cambio aplicada": ["N/A", f"{t_binance} Bs", f"{t_cambista} Bs"],
-        "Costo Final en $": [f"${costo_efectivo_real:.2f}", f"${costo_via_binance:.2f}", f"${costo_via_cambista:.2f}"]
-    })
+    st.warning("### ⚠️ USA EL EFECTIVO\nNo hay ganancia cambiando a bolívares.")
