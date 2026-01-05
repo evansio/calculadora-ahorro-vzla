@@ -1,62 +1,49 @@
 import streamlit as st
-import pyDolarVenezuela as pdv
 
 # Configuración de la página
 st.set_page_config(page_title="Calculadora Cambiaria Vzla", page_icon="💸")
 
-st.title("💸 Calculadora Automática de Ahorro")
-st.markdown("Las tasas de **BCV** y **Binance** se actualizan solas. Puedes ajustarlas si es necesario.")
+# --- INICIALIZACIÓN DE VALORES BASE ---
+# Esto asegura que la app empiece en 304 y 570 y guarde tus cambios manuales
+if 't_bcv_manual' not in st.session_state:
+    st.session_state.t_bcv_manual = 304.00
+if 't_binance_manual' not in st.session_state:
+    st.session_state.t_binance_manual = 570.00
 
-# --- OBTENCIÓN AUTOMÁTICA DE TASAS ---
-@st.cache_data(ttl=600)  # Se actualiza cada 10 minutos
-def obtener_tasas_en_vivo():
-    try:
-        monitor = pd.Monitor()
-        datos = monitor.get_all_monitors()
-        
-        tasa_bcv = 0.0
-        tasa_binance = 0.0
-        
-        for m in datos:
-            key = m.lower()
-            # Buscamos coincidencias para BCV y Binance
-            if 'bcv' in key and tasa_bcv == 0:
-                tasa_bcv = float(datos[m]['price'])
-            if 'binance' in key and tasa_binance == 0:
-                tasa_binance = float(datos[m]['price'])
-        
-        return tasa_bcv, tasa_binance
-    except Exception as e:
-        # Valores de respaldo si falla la conexión
-        return 470.00, 56.00
-
-# Llamada a la función automática
-tasa_auto_bcv, tasa_auto_binance = obtener_tasas_en_vivo()
+st.title("💸 Calculadora de Ahorro")
+st.markdown("Configura las tasas manualmente y compara dónde rinde más tu dinero.")
 
 # --- CONFIGURACIÓN EN LA BARRA LATERAL ---
-st.sidebar.header("⚙️ Tasas en Tiempo Real")
+st.sidebar.header("⚙️ Configuración de Tasas")
 
-# Estos inputs toman el valor automático pero te dejan escribir si quieres
-t_bcv = st.sidebar.number_input("Tasa BCV (Oficial)", value=tasa_auto_bcv, format="%.2f")
-t_binance = st.sidebar.number_input("Tasa Binance P2P", value=tasa_auto_binance, format="%.2f")
+# Inputs manuales que cargan desde el estado de sesión
+t_bcv = st.sidebar.number_input(
+    "Tasa BCV (Oficial)", 
+    value=st.session_state.t_bcv_manual, 
+    format="%.2f",
+    key="bcv_input"
+)
+t_binance = st.sidebar.number_input(
+    "Tasa Binance P2P", 
+    value=st.session_state.t_binance_manual, 
+    format="%.2f",
+    key="bin_input"
+)
 
 st.sidebar.divider()
 st.sidebar.header("🏪 Tasas Personalizadas")
-# Tasa de la tienda: por defecto es igual al BCV
+# Tasa de la tienda: por defecto es igual al BCV que pusiste arriba
 t_tienda = st.sidebar.number_input("Tasa de la Tienda", value=t_bcv, format="%.2f")
-# Tasa de cambista: por defecto es igual a Binance
+# Tasa de cambista: por defecto es igual a Binance que pusiste arriba
 t_cambista = st.sidebar.number_input("Tasa del Cambista", value=t_binance, format="%.2f")
 
 # --- LÓGICA DE CÁLCULO ---
 monto_usd = st.number_input("Monto de la compra ($)", min_value=0.1, value=10.0, step=1.0)
 
-# 1. Pago en Efectivo (Monto * Tasa Tienda + 3% IGTF)
-# Calculamos cuánto te cuesta en "dólares reales" pagar con billetes físicos
+# 1. Pago en Efectivo (Monto * 1.03 por el IGTF)
 costo_efectivo_usd = monto_usd * 1.03 
 
-# 2. Pago vía Binance (Usando la Tasa de la Tienda)
-# Primero: ¿Cuántos Bs pide la tienda? -> monto_usd * t_tienda
-# Segundo: ¿Cuántos $ de tu Binance debes vender para obtener esos Bs?
+# 2. Pago vía Binance (Cambiando dólares para pagar a la tasa de la tienda)
 costo_binance_usd = (monto_usd * t_tienda) / t_binance
 
 # 3. Pago vía Cambista
@@ -68,7 +55,7 @@ metodo_nombre = "Binance" if costo_binance_usd <= costo_cambista_usd else "Cambi
 
 ahorro = costo_efectivo_usd - mejor_opcion_bs
 
-# --- RESULTADOS VISUALES ---
+# --- VISUALIZACIÓN ---
 st.header("📊 Comparativa de Costo Real")
 col1, col2 = st.columns(2)
 
@@ -85,13 +72,13 @@ st.divider()
 
 # Mensaje de decisión
 if ahorro > 0:
-    st.success(f"### ✅ ¡Cambia tus $ y paga en Bolívares!\nTe ahorras un **{((ahorro/costo_efectivo_usd)*100):.1f}%** comparado con usar el efectivo.")
+    st.success(f"### ✅ CONVIENE PAGAR EN BOLÍVARES\nTe ahorras un **{((ahorro/costo_efectivo_usd)*100):.1f}%** comparado con usar el efectivo.")
 else:
-    st.warning("### ⚠️ Usa tus Dólares en Efectivo\nNo hay suficiente brecha para que valga la pena cambiar.")
+    st.warning("### ⚠️ CONVIENE PAGAR EN EFECTIVO\nLa brecha es demasiado corta o negativa con estas tasas.")
 
 # Tabla de transparencia
 st.table({
     "Opción": ["Efectivo (Físico)", "Bolívares (Binance)", "Bolívares (Cambista)"],
-    "Tasa de Cambio": ["N/A", f"{t_binance} Bs", f"{t_cambista} Bs"],
-    "Costo Final ($)": [f"${costo_efectivo_usd:.2f}", f"${costo_binance_usd:.2f}", f"${costo_cambista_usd:.2f}"]
+    "Tasa de Cambio ($ a Bs)": ["N/A", f"{t_binance} Bs", f"{t_cambista} Bs"],
+    "Costo Real ($)": [f"${costo_efectivo_usd:.2f}", f"${costo_binance_usd:.2f}", f"${costo_cambista_usd:.2f}"]
 })
