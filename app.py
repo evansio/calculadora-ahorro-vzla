@@ -25,7 +25,7 @@ def obtener_datos():
                 binance = float(datos[m]['price'])
         return bcv, binance
     except:
-        return 304,6796, 57.50
+        return 304.6796, 57.50
 
 # Cargar datos automáticos solo la primera vez
 if st.session_state.tasa_bcv == 0:
@@ -81,4 +81,5 @@ if ahorro > 0:
     st.success(f"### ✅ ¡CONVIENE PAGAR EN BS!\nAhorro: {((ahorro/costo_efe)*100):.1f}%")
 else:
     st.warning("### ⚠️ USA EFECTIVO")
+
 
